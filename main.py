@@ -1,10 +1,7 @@
 import os
 import gdown
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file
 from gtts import gTTS
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-from oauth2client.service_account import ServiceAccountCredentials
 from moviepy.editor import ImageClip, AudioFileClip
 
 app = Flask(__name__)
@@ -18,32 +15,7 @@ def home():
 
 
 # =============================
-# GOOGLE DRIVE UPLOAD
-# =============================
-def upload_to_drive(filename):
-    json_path = "service_account.json"
-
-    scope = ["https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
-
-    gauth = GoogleAuth()
-    gauth.credentials = creds
-    drive = GoogleDrive(gauth)
-
-    folder_id = "1jld85H4AdRm-MuJE8EmEI1cw9ZHfWRxy"
-
-    file_drive = drive.CreateFile({
-        "title": filename,
-        "parents": [{"id": folder_id}]
-    })
-    file_drive.SetContentFile(filename)
-    file_drive.Upload()
-
-    return True
-
-
-# =============================
-# RENDER VIDEO
+# RENDER VIDEO (DOWNLOAD)
 # =============================
 @app.route("/render", methods=["GET", "POST"])
 def start_render():
@@ -80,13 +52,13 @@ def start_render():
             logger=None
         )
 
-        # 4. UPLOAD TO DRIVE
-        upload_to_drive(output_file)
-
-        return jsonify({
-            "status": "success",
-            "message": "Video created and uploaded successfully"
-        }), 200
+        # 4. RETURN VIDEO AS DOWNLOAD
+        return send_file(
+            output_file,
+            as_attachment=True,
+            download_name="final_video.mp4",
+            mimetype="video/mp4"
+        )
 
     except Exception as e:
         return jsonify({

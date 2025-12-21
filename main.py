@@ -1,7 +1,8 @@
 import os
 from flask import Flask, request
 from gtts import gTTS
-from moviepy.editor import ImageClip, AudioFileClip
+from moviepy.video.VideoClip import ImageClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
 
 app = Flask(__name__)
 

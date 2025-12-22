@@ -7,7 +7,7 @@ from moviepy.editor import ImageClip, AudioFileClip
 app = Flask(__name__)
 
 # =============================
-# HEALTH CHECK
+# HEALTH CHECK (stops 404)
 # =============================
 @app.route("/")
 def home():
@@ -15,14 +15,14 @@ def home():
 
 
 # =============================
-# RENDER VIDEO
+# RENDER VIDEO (DOWNLOAD)
 # =============================
 @app.route("/render", methods=["GET", "POST"])
 def start_render():
     try:
         # 1. DOWNLOAD FILES
         image_url = "https://drive.google.com/uc?id=1KNUxDRgz2c02OaB5Zu18g1dN3kfvbIdf"
-        text_url  = "https://drive.google.com/uc?id=1VXH4yJl4OIAreWqrzEJQr1aoXRsokMTI"
+        text_url = "https://drive.google.com/uc?id=1VXH4yJl4OIAreWqrzEJQr1aoXRsokMTI"
 
         gdown.download(image_url, "image.jpg", quiet=False)
         gdown.download(text_url, "story.txt", quiet=False)
@@ -44,43 +44,27 @@ def start_render():
         clip = clip.set_audio(audio)
 
         output_file = "final_video.mp4"
-
-        # This ensures the file is fully written before proceeding
         clip.write_videofile(
             output_file,
             fps=24,
             codec="libx264",
-            audio_codec="aac"
+            audio_codec="aac",
+            logger=None
         )
 
-        # 4. RETURN DOWNLOAD LINK
-        return jsonify({
-            "status": "rendered",
-            "download_url": "/download"
-        }), 200
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "detail": str(e)
-        }), 500
-
-
-# =============================
-# DOWNLOAD ENDPOINT
-# =============================
-@app.route("/download")
-def download_video():
-    output_file = "final_video.mp4"
-    if os.path.exists(output_file):
+        # 4. RETURN VIDEO AS DOWNLOAD
         return send_file(
             output_file,
             as_attachment=True,
             download_name="final_video.mp4",
             mimetype="video/mp4"
         )
-    else:
-        return jsonify({"error": "Video not found"}), 404
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "detail": str(e)
+        }), 500
 
 
 # =============================

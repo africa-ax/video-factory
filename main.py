@@ -1,75 +1,95 @@
 import os
-import gdown
-from flask import Flask, jsonify, send_file
+import datetime
+import google.generativeai as genai
 from gtts import gTTS
 from moviepy.editor import ImageClip, AudioFileClip
 
-app = Flask(__name__)
+# =========================
+# CONFIG
+# =========================
+VIDEO_COUNT = 3
+IMAGE_PATH = "image.jpg"  # You must add ONE construction image to repo
+OUTPUT_DIR = "outputs"
 
-# =============================
-# HEALTH CHECK (stops 404)
-# =============================
-@app.route("/")
-def home():
-    return "my-video-robot is running", 200
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# =========================
+# GEMINI SETUP
+# =========================
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# =============================
-# RENDER VIDEO (DOWNLOAD)
-# =============================
-@app.route("/render", methods=["GET", "POST"])
-def start_render():
-    try:
-        # 1. DOWNLOAD FILES
-        image_url = "https://drive.google.com/uc?id=1KNUxDRgz2c02OaB5Zu18g1dN3kfvbIdf"
-        text_url = "https://drive.google.com/uc?id=1VXH4yJl4OIAreWqrzEJQr1aoXRsokMTI"
+MODEL = genai.GenerativeModel("gemini-pro")
 
-        gdown.download(image_url, "image.jpg", quiet=False)
-        gdown.download(text_url, "story.txt", quiet=False)
+SYSTEM_PROMPT = """
+You are a construction expert in Africa.
+Your audience is beginners, home owners, and small contractors.
 
-        with open("story.txt", "r", encoding="utf-8") as f:
-            text_story = f.read().strip()
+Generate short-form educational construction content.
 
-        if not text_story:
-            return jsonify({"error": "Story text is empty"}), 400
+Rules:
+- Language: simple English
+- Length: 40–60 seconds when spoken
+- Start with a strong hook in the first sentence
+- Focus on real construction problems, costs, mistakes, or tips
+- Do not use emojis
+- Do not mention AI
+- End with a practical takeaway
 
-        # 2. CREATE AUDIO
-        tts = gTTS(text=text_story, lang="en")
-        tts.save("voice.mp3")
+Output format:
 
-        audio = AudioFileClip("voice.mp3")
+TITLE:
+SCRIPT:
+"""
 
-        # 3. CREATE VIDEO
-        clip = ImageClip("image.jpg").set_duration(audio.duration)
-        clip = clip.set_audio(audio)
+# =========================
+# GENERATE SCRIPT
+# =========================
+def generate_script():
+    response = MODEL.generate_content(SYSTEM_PROMPT)
+    text = response.text
 
-        output_file = "final_video.mp4"
-        clip.write_videofile(
-            output_file,
-            fps=24,
-            codec="libx264",
-            audio_codec="aac",
-            logger=None
-        )
+    if "SCRIPT:" not in text:
+        raise Exception("Invalid Gemini output")
 
-        # 4. RETURN VIDEO AS DOWNLOAD
-        return send_file(
-            output_file,
-            as_attachment=True,
-            download_name="final_video.mp4",
-            mimetype="video/mp4"
-        )
+    return text.split("SCRIPT:")[1].strip()
 
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "detail": str(e)
-        }), 500
+# =========================
+# CREATE VIDEO
+# =========================
+def create_video(script, index):
+    date_str = datetime.date.today().isoformat()
+    audio_path = f"voice_{index}.mp3"
+    video_path = f"{OUTPUT_DIR}/{date_str}_video_{index}.mp4"
 
+    tts = gTTS(text=script, lang="en")
+    tts.save(audio_path)
 
-# =============================
-# START SERVER
-# =============================
+    audio = AudioFileClip(audio_path)
+    clip = ImageClip(IMAGE_PATH).set_duration(audio.duration)
+    clip = clip.set_audio(audio)
+
+    clip.write_videofile(
+        video_path,
+        fps=24,
+        codec="libx264",
+        audio_codec="aac",
+        logger=None
+    )
+
+    audio.close()
+    clip.close()
+
+    os.remove(audio_path)
+
+# =========================
+# MAIN
+# =========================
+def main():
+    for i in range(1, VIDEO_COUNT + 1):
+        script = generate_script()
+        create_video(script, i)
+
+    print("✅ Daily construction videos generated")
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    main()

@@ -3,3 +3,5 @@ gtts
 moviepy
 pillow
 imageio[ffmpeg]
+requests
+flask

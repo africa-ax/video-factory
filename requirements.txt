@@ -1,5 +1,5 @@
-flask
-moviepy==1.0.3
-gdown
+google-generativeai
 gtts
-pydrive2
+moviepy
+pillow
+imageio[ffmpeg]

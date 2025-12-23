@@ -1,7 +1,11 @@
 google-generativeai
 gtts
-moviepy
+moviepy==1.0.3
 pillow
-imageio[ffmpeg]
+imageio==2.25.1
+imageio-ffmpeg
 requests
 flask
+grpcio
+grpcio-tools
+importlib-metadata

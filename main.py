@@ -16,7 +16,8 @@ from moviepy.audio.fx.all import audio_loop
 import google.generativeai as genai
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-pro")
+
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 app = Flask(__name__)
 

@@ -12,6 +12,12 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 from moviepy.audio.fx.all import audio_loop
 
+# --- GEMINI ---
+import google.generativeai as genai
+
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-pro")
+
 app = Flask(__name__)
 
 # --- GITHUB CONFIG ---
@@ -23,50 +29,63 @@ RAW_URL_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/{BR
 
 @app.route("/")
 def home():
-    return "my-video-robot running", 200
+    return "my-video-robot running with Gemini", 200
+
+
+def generate_script():
+    prompt = (
+        "Write a short 30-second narration for a construction video. "
+        "Use simple English. Talk about quality, strength, and modern building."
+    )
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
 
 @app.route("/render", methods=["GET"])
 def start_render():
     temp_files = []
     try:
-        # ✅ USE ONLY 3 IMAGES
+        # 🔹 GEMINI SCRIPT
+        script_text = generate_script()
+
+        # 🔹 RANDOM IMAGES (2 or 3)
         image_pool = ["1.jpg", "2.jpg", "3.jpg"]
-        selected_images = random.sample(image_pool, 3)
+        num_images = random.choice([2, 3])
+        selected_images = random.sample(image_pool, num_images)
+        duration_per_image = 30 / num_images
+
         clips = []
 
-        # DOWNLOAD + PROCESS IMAGES
-        for img_name in selected_images:
-            img_url = f"{RAW_URL_BASE}{img_name}"
-            r = requests.get(img_url, timeout=10)
+        for img in selected_images:
+            img_url = f"{RAW_URL_BASE}{img}"
+            r = requests.get(img, timeout=10)
 
             if r.status_code == 200:
-                temp_path = f"temp_{img_name}"
+                temp_path = f"temp_{img}"
                 with open(temp_path, "wb") as f:
                     f.write(r.content)
                 temp_files.append(temp_path)
 
-                # ✅ LOW RESOLUTION + SHORT DURATION
                 clip = (
                     ImageClip(temp_path)
-                    .set_duration(10)     # 3 × 10s = 30s
-                    .resize(width=480)    # VERY IMPORTANT
+                    .set_duration(duration_per_image)
+                    .resize(width=480)  # SAFE FOR RENDER
                 )
                 clips.append(clip)
 
         if not clips:
-            return jsonify({"error": "Images not downloaded"}), 400
+            return jsonify({"error": "Images failed"}), 400
 
-        # AUDIO (30s)
-        text = "This construction project highlights precision, durability, and modern engineering excellence."
-        tts = gTTS(text=text, lang="en")
+        # 🔹 AUDIO (30s)
         audio_path = "voice.mp3"
+        tts = gTTS(text=script_text, lang="en")
         tts.save(audio_path)
         temp_files.append(audio_path)
 
         audio = AudioFileClip(audio_path)
         final_audio = audio_loop(audio, duration=30)
 
-        # VIDEO ASSEMBLY
+        # 🔹 VIDEO
         video = concatenate_videoclips(clips, method="compose")
         video = video.set_audio(final_audio)
 
@@ -76,12 +95,11 @@ def start_render():
             fps=24,
             codec="libx264",
             audio_codec="aac",
-            preset="ultrafast",  # 🔥 REQUIRED
-            threads=1,           # 🔥 REQUIRED
+            preset="ultrafast",
+            threads=1,
             logger=None
         )
 
-        # CLEAN TEMP FILES
         for f in temp_files:
             if os.path.exists(f):
                 os.remove(f)
@@ -94,12 +112,11 @@ def start_render():
         )
 
     except Exception as e:
-        for f in temp_files:
-            if os.path.exists(f):
-                os.remove(f)
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+

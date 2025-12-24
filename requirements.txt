@@ -1,11 +1,8 @@
-google-genai
-gtts
+flask
+requests
+pillow==9.5.0
 moviepy==1.0.3
-Pillow==9.5.0
 imageio==2.25.1
 imageio-ffmpeg
-requests
-flask
-grpcio
-grpcio-tools
-importlib-metadata
+gtts
+google-genai

@@ -1,9 +1,11 @@
+
 import os
 import random
 import requests
 import PIL.Image
 from flask import Flask, jsonify, send_file
 from gtts import gTTS
+from uuid import uuid4
 
 # --- PILLOW PATCH ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -12,11 +14,10 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 from moviepy.audio.fx.all import audio_loop
 
-# --- GEMINI ---
-import google.generativeai as genai
+# --- NEW GEMINI SDK ---
+from google import genai
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel("models/gemini-1.5-flash-latest")
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 app = Flask(__name__)
 
@@ -29,23 +30,39 @@ RAW_URL_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/{BR
 
 @app.route("/")
 def home():
-    return "my-video-robot running with Gemini", 200
+    return "my-video-robot running with Gemini ✅", 200
 
 
 def generate_script():
-    prompt = (
-        "Write a short 30-second narration for a construction video. "
-        "Use simple English. Talk about quality, strength, and modern building."
+    # 🔹 RANDOM SEED → forces new idea every time
+    seed = random.randint(1000, 999999)
+
+    prompt = f"""
+    Create a UNIQUE 30-second narration for a construction video.
+    Seed: {seed}
+
+    Rules:
+    - Simple English
+    - Talk like a real person
+    - Mention strength, quality, modern buildings
+    - Do NOT repeat previous ideas
+    - Max 75 words
+    """
+
+    response = client.models.generate_content(
+        model="gemini-1.5-flash",
+        contents=prompt
     )
-    response = model.generate_content(prompt)
+
     return response.text.strip()
 
 
 @app.route("/render", methods=["GET"])
 def start_render():
     temp_files = []
+
     try:
-        # 🔹 GEMINI SCRIPT
+        # 🔹 GEMINI SCRIPT (NEW EVERY TIME)
         script_text = generate_script()
 
         # 🔹 RANDOM IMAGES (2 or 3)
@@ -61,7 +78,7 @@ def start_render():
             r = requests.get(img, timeout=10)
 
             if r.status_code == 200:
-                temp_path = f"temp_{img}"
+                temp_path = f"temp_{uuid4().hex}.jpg"
                 with open(temp_path, "wb") as f:
                     f.write(r.content)
                 temp_files.append(temp_path)
@@ -69,15 +86,15 @@ def start_render():
                 clip = (
                     ImageClip(temp_path)
                     .set_duration(duration_per_image)
-                    .resize(width=480)  # SAFE FOR RENDER
+                    .resize(width=360)  # 🔹 VERY LOW SIZE → EASY DOWNLOAD
                 )
                 clips.append(clip)
 
         if not clips:
             return jsonify({"error": "Images failed"}), 400
 
-        # 🔹 AUDIO (30s)
-        audio_path = "voice.mp3"
+        # 🔹 AUDIO
+        audio_path = f"voice_{uuid4().hex}.mp3"
         tts = gTTS(text=script_text, lang="en")
         tts.save(audio_path)
         temp_files.append(audio_path)
@@ -100,6 +117,7 @@ def start_render():
             logger=None
         )
 
+        # 🔹 CLEANUP
         for f in temp_files:
             if os.path.exists(f):
                 os.remove(f)
@@ -118,5 +136,4 @@ def start_render():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-
+    

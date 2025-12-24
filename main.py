@@ -1,4 +1,3 @@
-
 import os
 import random
 import requests
@@ -14,7 +13,7 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 from moviepy.audio.fx.all import audio_loop
 
-# --- NEW GEMINI SDK ---
+# --- NEW GEMINI SDK (CORRECT) ---
 from google import genai
 
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -34,24 +33,23 @@ def home():
 
 
 def generate_script():
-    # 🔹 RANDOM SEED → forces new idea every time
     seed = random.randint(1000, 999999)
 
     prompt = f"""
-    Create a UNIQUE 30-second narration for a construction video.
-    Seed: {seed}
+Create a UNIQUE 30-second narration for a construction video.
+Seed: {seed}
 
-    Rules:
-    - Simple English
-    - Talk like a real person
-    - Mention strength, quality, modern buildings
-    - Do NOT repeat previous ideas
-    - Max 75 words
-    """
+Rules:
+- Simple English
+- Sound like a real person talking
+- Mention strength, quality, and modern buildings
+- Do NOT repeat ideas
+- Max 75 words
+"""
 
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt
+        model="gemini-2.0-flash",  # ✅ CORRECT MODEL
+        contents=prompt,
     )
 
     return response.text.strip()
@@ -62,7 +60,7 @@ def start_render():
     temp_files = []
 
     try:
-        # 🔹 GEMINI SCRIPT (NEW EVERY TIME)
+        # 🔹 GEMINI SCRIPT
         script_text = generate_script()
 
         # 🔹 RANDOM IMAGES (2 or 3)
@@ -86,7 +84,7 @@ def start_render():
                 clip = (
                     ImageClip(temp_path)
                     .set_duration(duration_per_image)
-                    .resize(width=360)  # 🔹 VERY LOW SIZE → EASY DOWNLOAD
+                    .resize(width=360)  # 🔹 VERY SMALL SIZE
                 )
                 clips.append(clip)
 
@@ -95,8 +93,7 @@ def start_render():
 
         # 🔹 AUDIO
         audio_path = f"voice_{uuid4().hex}.mp3"
-        tts = gTTS(text=script_text, lang="en")
-        tts.save(audio_path)
+        gTTS(text=script_text, lang="en").save(audio_path)
         temp_files.append(audio_path)
 
         audio = AudioFileClip(audio_path)
@@ -136,4 +133,4 @@ def start_render():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+

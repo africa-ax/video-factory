@@ -1,0 +1,981 @@
+I'll help you refactor your project to meet your new requirements. Here's the updated structure:
+
+Updated Project Structure
+
+```
+project/
+├── main.py
+├── requirements.txt
+├── runtime.txt
+├── static/
+│   ├── videos/      # Store uploaded video clips
+│   ├── audio/       # Store uploaded audio files
+│   └── output/      # Store rendered videos
+├── templates/
+│   └── index.html   # Frontend interface
+└── README.md
+```
+
+1. Updated main.py
+
+```python
+import os
+import glob
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
+from werkzeug.utils import secure_filename
+from moviepy.editor import VideoFileClip, concatenate_videoclips
+
+app = Flask(__name__)
+
+# Configuration
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
+app.config['UPLOAD_FOLDER'] = 'static'
+app.config['ALLOWED_VIDEO_EXTENSIONS'] = {'mp4', 'avi', 'mov', 'mkv', 'webm'}
+app.config['ALLOWED_AUDIO_EXTENSIONS'] = {'mp3', 'wav', 'ogg'}
+
+# Ensure directories exist
+for folder in ['videos', 'audio', 'output']:
+    path = os.path.join(app.config['UPLOAD_FOLDER'], folder)
+    os.makedirs(path, exist_ok=True)
+
+def allowed_file(filename, file_type='video'):
+    """Check if file extension is allowed"""
+    if '.' not in filename:
+        return False
+    
+    ext = filename.rsplit('.', 1)[1].lower()
+    if file_type == 'video':
+        return ext in app.config['ALLOWED_VIDEO_EXTENSIONS']
+    elif file_type == 'audio':
+        return ext in app.config['ALLOWED_AUDIO_EXTENSIONS']
+    return False
+
+@app.route('/')
+def index():
+    """Main page with upload and merge interface"""
+    # Get list of uploaded videos
+    video_files = []
+    video_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'videos')
+    
+    for file in os.listdir(video_dir):
+        if allowed_file(file, 'video'):
+            video_files.append({
+                'name': file,
+                'path': f'/static/videos/{file}',
+                'size': os.path.getsize(os.path.join(video_dir, file))
+            })
+    
+    return render_template('index.html', videos=video_files)
+
+@app.route('/upload-video', methods=['POST'])
+def upload_video():
+    """Upload stock video clip"""
+    if 'video' not in request.files:
+        return jsonify({'error': 'No video file provided'}), 400
+    
+    video_file = request.files['video']
+    
+    if video_file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    if not allowed_file(video_file.filename, 'video'):
+        return jsonify({'error': 'File type not allowed'}), 400
+    
+    # Secure filename and save
+    filename = secure_filename(video_file.filename)
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], 'videos', filename)
+    
+    # If file exists, add timestamp
+    if os.path.exists(save_path):
+        name, ext = os.path.splitext(filename)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{name}_{timestamp}{ext}"
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], 'videos', filename)
+    
+    video_file.save(save_path)
+    
+    return jsonify({
+        'success': True,
+        'filename': filename,
+        'path': f'/static/videos/{filename}'
+    })
+
+@app.route('/upload-audio', methods=['POST'])
+def upload_audio():
+    """Upload audio file for merging"""
+    if 'audio' not in request.files:
+        return jsonify({'error': 'No audio file provided'}), 400
+    
+    audio_file = request.files['audio']
+    
+    if audio_file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    if not allowed_file(audio_file.filename, 'audio'):
+        return jsonify({'error': 'File type not allowed'}), 400
+    
+    # Secure filename and save
+    filename = secure_filename(audio_file.filename)
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', filename)
+    
+    # If file exists, add timestamp
+    if os.path.exists(save_path):
+        name, ext = os.path.splitext(filename)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{name}_{timestamp}{ext}"
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', filename)
+    
+    audio_file.save(save_path)
+    
+    return jsonify({
+        'success': True,
+        'filename': filename,
+        'path': f'/static/audio/{filename}'
+    })
+
+@app.route('/get-videos')
+def get_videos():
+    """Get list of uploaded videos"""
+    video_files = []
+    video_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'videos')
+    
+    for file in os.listdir(video_dir):
+        if allowed_file(file, 'video'):
+            video_files.append({
+                'name': file,
+                'path': f'/static/videos/{file}'
+            })
+    
+    return jsonify({'videos': video_files})
+
+@app.route('/render', methods=['POST'])
+def render_video():
+    """Merge selected video clips with audio"""
+    try:
+        data = request.json
+        selected_videos = data.get('videos', [])
+        audio_filename = data.get('audio')
+        
+        if not selected_videos:
+            return jsonify({'error': 'No videos selected'}), 400
+        
+        if not audio_filename:
+            return jsonify({'error': 'No audio selected'}), 400
+        
+        # Load video clips
+        clips = []
+        temp_files = []
+        
+        for video_name in selected_videos:
+            video_path = os.path.join(app.config['UPLOAD_FOLDER'], 'videos', video_name)
+            
+            if not os.path.exists(video_path):
+                continue
+            
+            clip = VideoFileClip(video_path)
+            # Resize to 360p width (maintain aspect ratio)
+            clip = clip.resize(width=360)
+            clips.append(clip)
+        
+        if not clips:
+            return jsonify({'error': 'No valid video clips found'}), 400
+        
+        # Concatenate video clips
+        final_clip = concatenate_videoclips(clips, method="compose")
+        
+        # Add audio
+        audio_path = os.path.join(app.config['UPLOAD_FOLDER'], 'audio', audio_filename)
+        
+        if os.path.exists(audio_path):
+            audio_clip = VideoFileClip(audio_path).audio
+            # Set audio to video duration or loop if needed
+            if audio_clip.duration < final_clip.duration:
+                # Loop audio to match video length
+                from moviepy.audio.fx.all import audio_loop
+                audio_clip = audio_loop(audio_clip, duration=final_clip.duration)
+            
+            final_clip = final_clip.set_audio(audio_clip)
+        
+        # Generate output filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"merged_video_{timestamp}.mp4"
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], 'output', output_filename)
+        
+        # Write video file with optimized settings for Render
+        final_clip.write_videofile(
+            output_path,
+            fps=24,
+            codec="libx264",
+            audio_codec="aac",
+            preset="ultrafast",
+            threads=1,
+            logger=None
+        )
+        
+        # Close clips to free resources
+        for clip in clips:
+            clip.close()
+        final_clip.close()
+        
+        return jsonify({
+            'success': True,
+            'filename': output_filename,
+            'path': f'/static/output/{output_filename}',
+            'download_url': f'/download/{output_filename}'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/download/<filename>')
+def download_video(filename):
+    """Download the rendered video"""
+    output_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'output')
+    return send_from_directory(
+        output_dir,
+        filename,
+        as_attachment=True,
+        download_name=f"merged_video_{datetime.now().strftime('%Y%m%d')}.mp4"
+    )
+
+@app.route('/static/<path:path>')
+def serve_static(path):
+    """Serve static files"""
+    return send_from_directory('static', path)
+
+@app.route('/cleanup', methods=['POST'])
+def cleanup():
+    """Clean up old output files (optional)"""
+    try:
+        output_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'output')
+        files = os.listdir(output_dir)
+        deleted_count = 0
+        
+        for file in files:
+            file_path = os.path.join(output_dir, file)
+            # Delete files older than 1 hour
+            if os.path.getmtime(file_path) < (datetime.now().timestamp() - 3600):
+                os.remove(file_path)
+                deleted_count += 1
+        
+        return jsonify({'success': True, 'deleted': deleted_count})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+```
+
+2. Updated requirements.txt
+
+```txt
+Flask==2.3.3
+Werkzeug==2.3.7
+moviepy==1.0.3
+imageio==2.31.1
+imageio-ffmpeg==0.4.9
+Pillow==10.0.0
+```
+
+3. Updated runtime.txt
+
+```txt
+python-3.10.12
+```
+
+4. Create templates/index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Merger - Upload & Merge Videos with Audio</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        
+        .section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .section-title {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+        
+        .upload-area {
+            border: 3px dashed #adb5bd;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 15px;
+        }
+        
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f0f2ff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #e6e9ff;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.3s, box-shadow 0.3s;
+            margin: 10px 5px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn:disabled {
+            background: #adb5bd;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .video-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .video-item {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        
+        .video-item:hover {
+            transform: translateY(-5px);
+        }
+        
+        .video-thumbnail {
+            width: 100%;
+            height: 140px;
+            background: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 48px;
+        }
+        
+        .video-info {
+            padding: 15px;
+        }
+        
+        .video-checkbox {
+            margin-right: 10px;
+        }
+        
+        .progress-container {
+            margin-top: 20px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2em;
+            color: #495057;
+        }
+        
+        .selected-count {
+            background: #667eea;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+        
+        .download-link {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            margin-top: 20px;
+            transition: transform 0.3s;
+        }
+        
+        .download-link:hover {
+            transform: scale(1.05);
+            color: white;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .video-gallery {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Video Merger</h1>
+        
+        <!-- Upload Stock Video Section -->
+        <div class="section">
+            <h2 class="section-title">1. Upload Stock Video Clips</h2>
+            <div class="upload-area" id="videoUploadArea">
+                <div class="upload-icon">📁</div>
+                <h3>Drag & Drop Video Files Here</h3>
+                <p>or click to browse (MP4, AVI, MOV, MKV, WEBM)</p>
+                <input type="file" id="videoInput" accept="video/*" multiple style="display: none;">
+            </div>
+            <div class="progress-container" id="videoProgress" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="videoProgressFill"></div>
+                </div>
+                <div id="videoProgressText">Uploading...</div>
+            </div>
+            <button class="btn" onclick="document.getElementById('videoInput').click()">Browse Files</button>
+            <button class="btn" onclick="refreshVideos()">Refresh List</button>
+        </div>
+        
+        <!-- Upload Audio Section -->
+        <div class="section">
+            <h2 class="section-title">2. Upload Audio File</h2>
+            <div class="upload-area" id="audioUploadArea">
+                <div class="upload-icon">🎵</div>
+                <h3>Drag & Drop Audio File Here</h3>
+                <p>or click to browse (MP3, WAV, OGG)</p>
+                <input type="file" id="audioInput" accept="audio/*" style="display: none;">
+            </div>
+            <div class="progress-container" id="audioProgress" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="audioProgressFill"></div>
+                </div>
+                <div id="audioProgressText">Uploading...</div>
+            </div>
+            <button class="btn" onclick="document.getElementById('audioInput').click()">Browse Audio File</button>
+            <div id="currentAudio" class="status"></div>
+        </div>
+        
+        <!-- Select & Merge Section -->
+        <div class="section">
+            <h2 class="section-title">
+                3. Select Clips & Merge 
+                <span class="selected-count" id="selectedCount">0 selected</span>
+            </h2>
+            
+            <!-- Video Gallery -->
+            <div id="videoGallery" class="video-gallery">
+                <!-- Videos will be loaded here -->
+            </div>
+            
+            <div class="status" id="selectionStatus">Select videos and upload audio to enable merge</div>
+            
+            <button class="btn" id="mergeBtn" onclick="mergeVideos()" disabled>Merge Selected Videos with Audio</button>
+            
+            <!-- Results Section -->
+            <div id="resultSection" style="display: none; text-align: center;">
+                <div class="message success" id="successMessage"></div>
+                <div class="message error" id="errorMessage"></div>
+                <a href="#" class="download-link" id="downloadLink" style="display: none;">Download Merged Video</a>
+                <div class="status" id="renderStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedVideos = new Set();
+        let currentAudio = null;
+        
+        // DOM Elements
+        const videoInput = document.getElementById('videoInput');
+        const audioInput = document.getElementById('audioInput');
+        const videoGallery = document.getElementById('videoGallery');
+        const selectedCount = document.getElementById('selectedCount');
+        const mergeBtn = document.getElementById('mergeBtn');
+        const currentAudioEl = document.getElementById('currentAudio');
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadVideos();
+            setupDragAndDrop();
+        });
+        
+        // Setup drag and drop
+        function setupDragAndDrop() {
+            const videoArea = document.getElementById('videoUploadArea');
+            const audioArea = document.getElementById('audioUploadArea');
+            
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                videoArea.addEventListener(eventName, preventDefaults, false);
+                audioArea.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            ['dragenter', 'dragover'].forEach(eventName => {
+                videoArea.addEventListener(eventName, () => videoArea.classList.add('dragover'), false);
+                audioArea.addEventListener(eventName, () => audioArea.classList.add('dragover'), false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                videoArea.addEventListener(eventName, () => videoArea.classList.remove('dragover'), false);
+                audioArea.addEventListener(eventName, () => audioArea.classList.remove('dragover'), false);
+            });
+            
+            videoArea.addEventListener('drop', handleVideoDrop, false);
+            audioArea.addEventListener('drop', handleAudioDrop, false);
+        }
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
+        function handleVideoDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            uploadVideos(files);
+        }
+        
+        function handleAudioDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                uploadAudio(files[0]);
+            }
+        }
+        
+        // Video upload handler
+        videoInput.addEventListener('change', (e) => {
+            uploadVideos(e.target.files);
+        });
+        
+        // Audio upload handler
+        audioInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                uploadAudio(e.target.files[0]);
+            }
+        });
+        
+        // Upload videos
+        async function uploadVideos(files) {
+            const progress = document.getElementById('videoProgress');
+            const progressFill = document.getElementById('videoProgressFill');
+            const progressText = document.getElementById('videoProgressText');
+            
+            progress.style.display = 'block';
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const formData = new FormData();
+                formData.append('video', file);
+                
+                try {
+                    const response = await fetch('/upload-video', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    // Update progress
+                    const percent = ((i + 1) / files.length) * 100;
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = `Uploading ${i + 1} of ${files.length}: ${file.name}`;
+                    
+                    if (result.success) {
+                        console.log('Uploaded:', result.filename);
+                    } else {
+                        showError('Error uploading ' + file.name + ': ' + result.error);
+                    }
+                } catch (error) {
+                    showError('Error uploading ' + file.name + ': ' + error.message);
+                }
+            }
+            
+            // Hide progress and refresh list
+            setTimeout(() => {
+                progress.style.display = 'none';
+                progressFill.style.width = '0%';
+                loadVideos();
+            }, 1000);
+        }
+        
+        // Upload audio
+        async function uploadAudio(file) {
+            const progress = document.getElementById('audioProgress');
+            const progressFill = document.getElementById('audioProgressFill');
+            const progressText = document.getElementById('audioProgressText');
+            
+            progress.style.display = 'block';
+            progressText.textContent = `Uploading: ${file.name}`;
+            
+            const formData = new FormData();
+            formData.append('audio', file);
+            
+            try {
+                const response = await fetch('/upload-audio', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentAudio = result.filename;
+                    currentAudioEl.textContent = `Current Audio: ${result.filename}`;
+                    progressFill.style.width = '100%';
+                    showSuccess('Audio uploaded successfully!');
+                    updateMergeButton();
+                } else {
+                    showError('Error uploading audio: ' + result.error);
+                }
+            } catch (error) {
+                showError('Error: ' + error.message);
+            }
+            
+            setTimeout(() => {
+                progress.style.display = 'none';
+                progressFill.style.width = '0%';
+            }, 1000);
+        }
+        
+        // Load videos from server
+        async function loadVideos() {
+            try {
+                const response = await fetch('/get-videos');
+                const data = await response.json();
+                displayVideos(data.videos);
+            } catch (error) {
+                showError('Error loading videos: ' + error.message);
+            }
+        }
+        
+        // Refresh videos
+        function refreshVideos() {
+            loadVideos();
+        }
+        
+        // Display videos in gallery
+        function displayVideos(videos) {
+            videoGallery.innerHTML = '';
+            
+            if (videos.length === 0) {
+                videoGallery.innerHTML = '<div class="status">No videos uploaded yet</div>';
+                return;
+            }
+            
+            videos.forEach(video => {
+                const videoItem = document.createElement('div');
+                videoItem.className = 'video-item';
+                videoItem.innerHTML = `
+                    <div class="video-thumbnail">🎬</div>
+                    <div class="video-info">
+                        <input type="checkbox" 
+                               class="video-checkbox" 
+                               data-video="${video.name}"
+                               onchange="toggleVideoSelection('${video.name}')">
+                        <label>${video.name}</label>
+                    </div>
+                `;
+                videoGallery.appendChild(videoItem);
+            });
+            
+            updateSelectedCount();
+        }
+        
+        // Toggle video selection
+        function toggleVideoSelection(videoName) {
+            if (selectedVideos.has(videoName)) {
+                selectedVideos.delete(videoName);
+            } else {
+                selectedVideos.add(videoName);
+            }
+            updateSelectedCount();
+            updateMergeButton();
+        }
+        
+        // Update selected count
+        function updateSelectedCount() {
+            selectedCount.textContent = `${selectedVideos.size} selected`;
+        }
+        
+        // Update merge button state
+        function updateMergeButton() {
+            const canMerge = selectedVideos.size > 0 && currentAudio !== null;
+            mergeBtn.disabled = !canMerge;
+        }
+        
+        // Merge videos with audio
+        async function mergeVideos() {
+            if (selectedVideos.size === 0 || !currentAudio) {
+                showError('Please select videos and upload audio first');
+                return;
+            }
+            
+            const resultSection = document.getElementById('resultSection');
+            const renderStatus = document.getElementById('renderStatus');
+            const downloadLink = document.getElementById('downloadLink');
+            
+            resultSection.style.display = 'block';
+            renderStatus.textContent = 'Processing... This may take a moment.';
+            downloadLink.style.display = 'none';
+            
+            try {
+                const response = await fetch('/render', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        videos: Array.from(selectedVideos),
+                        audio: currentAudio
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    renderStatus.textContent = 'Video merged successfully!';
+                    downloadLink.href = result.download_url;
+                    downloadLink.style.display = 'inline-block';
+                    showSuccess('Video ready for download!');
+                    
+                    // Auto-cleanup after 1 hour
+                    setTimeout(() => {
+                        fetch('/cleanup', { method: 'POST' });
+                    }, 3600000);
+                } else {
+                    renderStatus.textContent = 'Error: ' + result.error;
+                    showError('Error merging videos: ' + result.error);
+                }
+            } catch (error) {
+                renderStatus.textContent = 'Error: ' + error.message;
+                showError('Error: ' + error.message);
+            }
+        }
+        
+        // Utility functions for messages
+        function showSuccess(message) {
+            const el = document.getElementById('successMessage');
+            el.textContent = message;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+        
+        function showError(message) {
+            const el = document.getElementById('errorMessage');
+            el.textContent = message;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+    </script>
+</body>
+</html>
+```
+
+5. Updated README.md
+
+```markdown
+# Video Merger App
+
+A simple Flask application that allows you to upload stock video clips and merge them with audio to create a single video file.
+
+## Features
+
+- Upload multiple stock video clips (MP4, AVI, MOV, MKV, WEBM)
+- Upload audio files (MP3, WAV, OGG)
+- Select specific videos from your uploaded library
+- Merge selected videos with audio into a single video
+- Download the final merged video
+- Responsive web interface
+
+## Deployment on Render
+
+1. **Create a new Web Service on Render**
+   - Connect your GitHub repository
+   - Select Python as the runtime
+   - Use the following settings:
+     - **Build Command:** `pip install -r requirements.txt`
+     - **Start Command:** `python main.py`
+
+2. **Environment Variables**
+   - No environment variables required for basic functionality
+
+3. **Important Notes for Render:**
+   - File storage is ephemeral (files will be lost on redeploy)
+   - For persistent storage, consider using Render Disk or external storage (S3)
+   - Video processing requires ffmpeg (automatically installed via moviepy)
+
+## Local Development
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+```
+
+1. Run the application:
+   ```bash
+   python main.py
+   ```
+2. Open http://localhost:10000 in your browser
+
+Project Structure
+
+```
+project/
+├── main.py              # Flask application
+├── requirements.txt     # Python dependencies
+├── runtime.txt         # Python version
+├── templates/
+│   └── index.html      # Web interface
+└── static/
+    ├── videos/         # Uploaded video clips
+    ├── audio/          # Uploaded audio files
+    └── output/         # Rendered videos
+```
+
+Usage
+
+1. Upload Stock Videos: Drag and drop or click to upload video clips
+2. Upload Audio: Upload an audio file for your video
+3. Select & Merge: Check the videos you want to include, then click "Merge"
+4. Download: Click the download link when processing is complete
+
+Limitations on Render
+
+· Free tier has limited processing time (max 15 minutes per request)
+· Video files are stored temporarily (lost on service restart)
+· Large video files may timeout on free tier
+
+Tips for Better Performance
+
+1. Keep videos short (under 1 minute each)
+2. Use lower resolution videos (360p recommended)
+3. Merge fewer videos at a time
+4. Consider compressing videos before upload
+
+Support
+
+For issues or questions, please check the Render logs or contact support.
+
+```
+
+## Key Changes Made:
+
+1. **Removed API dependencies** (gTTS, requests, random)
+2. **Replaced images with video clips** 
+3. **Added upload functionality** for both videos and audio
+4. **Created web interface** with drag-and-drop upload
+5. **Changed from GitHub storage to local/server storage**
+6. **Added video selection gallery** 
+7. **Simplified rendering process** - just merge videos with audio
+8. **Added download functionality**
+9. **Optimized for Render deployment** with appropriate settings
+
+## How to Deploy:
+
+1. Create a new repository with these files
+2. Push to GitHub
+3. On Render.com, create a new Web Service
+4. Connect your repository
+5. Render will automatically detect the Python app
+6. The app will be live at your Render URL
+
+The app now does exactly what you requested: merges uploaded video clips with uploaded audio and provides a downloadable video file.

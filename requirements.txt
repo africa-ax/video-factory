@@ -1,8 +1,6 @@
-flask
-requests
-pillow==9.5.0
+Flask==2.3.3
+Werkzeug==2.3.7
 moviepy==1.0.3
-imageio==2.25.1
-imageio-ffmpeg
-gtts
-google-genai
+imageio==2.31.1
+imageio-ffmpeg==0.4.9
+Pillow==10.0.0
